@@ -13,6 +13,9 @@ const PostSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    postImage: {
+        type: String,
+    },
     totalLikes: {
         type: Number,
         default: 0

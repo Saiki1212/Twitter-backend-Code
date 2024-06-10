@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const cors = require('cors');
+require('dotenv').config();
 
 // Images 
 const images = {
@@ -46,23 +47,24 @@ const Notification = require('./Models/Notification');
 const Follow = require('./Models/FollowingFollower');
 
 const app = express();
-const port = 8000;
+const port = process.env.PORT || 8000;
 
 app.use(cors());
 
-app.use(bodyParser.urlencoded({extended: false}));
+app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.json())
-mongoose.connect("mongodb+srv://saikiran:saikiran@cluster0.umicdmm.mongodb.net/Anime-Web?retryWrites=true&w=majority&appName=Cluster0")
+app.use(bodyParser.json());
+
+mongoose.connect(process.env.MONGODB_URI)
     .then(() => {
         console.log("Project connected to MongoDB.....")
     }).catch((error) => {
-        console.log("Error while connecting to MongoDB.....",error)
-    })
+        console.log("Error while connecting to MongoDB.....", error)
+    });
 
-app.listen(port,() => {
-    console.log("Project Server is running at your port ",port," .....");
-})
+app.listen(port, () => {
+    console.log("Project Server is running at your port ", port, " .....");
+});
 
 app.get("/", (req, res) => {
     res.status(200).send({"success": true, "msg": "Node server running"});
@@ -70,33 +72,52 @@ app.get("/", (req, res) => {
 
 // End point for SignUp .........
 
-app.post('/register',async(req, res) => {
+app.post('/register', async (req, res) => {
     try {
+        const { name, email, username, password } = req.body;
 
-        const {name, email, username, password} = req.body
+        // Check if email or username already exists
+        const existingEmail = await User.findOne({ email });
+        const existingUsername = await User.findOne({ username });
 
-        const existingEmail = await User.findOne({email})
-        const existingUername = await User.findOne({username})
-        if(existingEmail) {
-            return res.status(400).json({message: "Email already exist's"})
+        if (existingEmail) {
+            return res.status(400).json({ message: "Email already exists" });
         }
-        if(existingUername) {
-            return res.status(400).json({message: "Username already exist's"})
+        if (existingUsername) {
+            return res.status(400).json({ message: "Username already exists" });
         }
+
+        // Hash the password
+        const hashedPassword = await bcrypt.hash(password, 10);
+
+        // Retrieve all passwords from the database
+        const users = await User.find({}, 'password');
+
+        // Check if the hashed password matches any existing password
+        for (let user of users) {
+            const isPasswordMatch = await bcrypt.compare(password, user.password);
+            if (isPasswordMatch) {
+                return res.status(400).json({ message: "Password already exists" });
+            }
+        }
+
+        // Generate profile picture based on the first letter of the username
         const firstLetter = username.charAt(0).toUpperCase();
         const profilePic = images[firstLetter] || defaultImage;
-        const hashedPassword = await bcrypt.hash(password, 10); // Hash the password
+
+        // Create a new user
         const newUser = new User({ name, email, username, password: hashedPassword, profilePic });
 
-        await newUser.save()
+        // Save the user
+        await newUser.save();
         console.log('Registration successful');
-        return res.status(200).json({message : 'Registration Successful'})
-
+        return res.status(200).json({ message: 'Registration Successful' });
     } catch (error) {
-        console.log('error in server.js at post register ... ', error)
-        return res.status(500).json({message: 'Registration Failed'})
+        console.log('Error in server.js at POST /register: ', error);
+        return res.status(500).json({ message: 'Registration Failed' });
     }
 });
+
 
 // End point for Login
 app.post('/login', async (req, res) => {
@@ -148,8 +169,13 @@ app.post('/editUserDetails',async(req, res) => {
 
         if(profilePic) {
             user.profilePic = profilePic;
+            await Post.updateMany({ username }, { profilepic:profilePic });
         }
-        
+
+        const notMessage = "Your have successfully updated your profile.";
+        const newNotification = new Notification({username, message: notMessage});
+        await newNotification.save();
+
         await user.save()
         console.log('Editing user successful');
         return res.status(200).json({message : 'Editing user Successful'})
@@ -160,16 +186,60 @@ app.post('/editUserDetails',async(req, res) => {
     }
 });
 
+// Endpoint to delete a user from data base.
+app.delete('/deleteUserFromDB', async(req, res) => {
+    try {
+        const {username} = req.body
+
+        const user = await User.findOne({username})
+        if(!user) {
+            return res.status(400).json({message: "user not exist's"})
+        }
+
+        // deleting user details from follow......
+        await Follow.deleteMany({username});
+        await Follow.deleteMany({following: username});
+
+        // deleting user details from notifications...
+        await Notification.deleteMany({username});
+
+        // deleting user details from PostLikes and tweets...
+        await PostLikes.deleteMany({username});
+        await PostTweets.deleteMany({username});
+
+        // deleting the tweets and likes for the posts of current user.
+        const allUserPosts = await Post.find({ username });
+
+        for (const post of allUserPosts) {
+            await PostLikes.deleteMany({ postId: post._id });
+            await PostTweets.deleteMany({ postId: post._id });
+        }
+
+        // Deleting user's posts
+        await Post.deleteMany({ username });
+
+        // Finally, deleting the user
+        await User.deleteOne({ username });
+
+        res.status(200).json({ message: 'User deleted successfully' });
+
+    } catch (error) {
+        console.log('error in server.js at deleting user from db ... ', error)
+        return res.status(500).json({message: 'deleting user from db Failed'});
+    }
+});
+
 //End point for post 
 app.post('/post', async(req, res) => {
     try {
-        const { username, postContent } = req.body;
+        const { username, postContent, postImage } = req.body;
         const user = await User.findOne({username})
         if(!user) {
             return res.status(400).json({message: "User not exists"});
         }
 
         const newPost = new Post({ username, postContent, profilepic: user.profilePic });
+        if(postImage) newPost.postImage = postImage;
         await newPost.save();
 
         user.posts = user.posts+1;
@@ -309,7 +379,7 @@ app.post('/AllTweetsOfPosts', async (req, res) => {
         const tweetedPosts = await PostTweets.find({ username });
 
         const detailedTweets = await Promise.all(tweetedPosts.map(async (tweet) => {
-            const originalPost = await Post.findById(tweet.postId).select('username profilepic postContent');
+            const originalPost = await Post.findById(tweet.postId).select('username profilepic postContent postImage');
             if (!originalPost) {
                 return null;
             }
@@ -317,7 +387,8 @@ app.post('/AllTweetsOfPosts', async (req, res) => {
                 ...tweet.toObject(), 
                 username: originalPost.username,
                 profilepic: originalPost.profilepic,
-                post: originalPost.postContent
+                post: originalPost.postContent,
+                postImage: originalPost.postImage
             };
         }));
         const filteredTweets = detailedTweets.filter(tweet => tweet !== null);
