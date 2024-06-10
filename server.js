@@ -55,7 +55,7 @@ app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.json());
 
-mongoose.connect(process.env.MONGODB_URI)
+mongoose.connect("mongodb+srv://saikiran:saikiran@cluster0.umicdmm.mongodb.net/Anime-Web?retryWrites=true&w=majority&appName=Cluster0")
     .then(() => {
         console.log("Project connected to MongoDB.....")
     }).catch((error) => {
